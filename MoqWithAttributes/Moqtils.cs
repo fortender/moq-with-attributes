@@ -2,6 +2,7 @@
 using Moq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Reflection.Emit;
 
 namespace MoqWithAttributes
 {
@@ -42,7 +43,29 @@ namespace MoqWithAttributes
                 throw new ArgumentException("Mock is already initialized", nameof(mock));
 
             ProxyGenerationOptions options = GetProxyGenerationOptions() ?? throw new InvalidOperationException("Hack is gone");
-            
+
+            return SwapoutDelegate == null ?
+                GetObjectWithAttributesSafely(mock, options, attributeFactoryExpressions) :
+                GetObjectWithAttributesRatherUnsafe(mock, options, attributeFactoryExpressions);
+        }
+
+        private static T GetObjectWithAttributesRatherUnsafe<T>(Mock<T> mock, ProxyGenerationOptions options, params Expression<Func<Attribute>>[] attributeFactoryExpressions) where T : class
+        {
+            IList<CustomAttributeInfo> customAttributes = attributeFactoryExpressions.Select(expr => CustomAttributeInfo.FromExpression(expr)).ToList();
+            IList<CustomAttributeInfo> capturedAttributes = SwapoutDelegate!(options, customAttributes);
+
+            try
+            {
+                return mock.Object;
+            }
+            finally
+            {
+                SwapoutDelegate!(options, capturedAttributes);
+            }
+        }
+
+        private static T GetObjectWithAttributesSafely<T>(Mock<T> mock, ProxyGenerationOptions options, params Expression<Func<Attribute>>[] attributeFactoryExpressions) where T : class
+        {
             lock (SyncLock)
             {
                 // Shallow copy of the list
@@ -68,6 +91,34 @@ namespace MoqWithAttributes
                         options.AdditionalAttributes.Add(attribute);
                 }
             }
+        }
+
+        private static readonly Func<ProxyGenerationOptions, IList<CustomAttributeInfo>, IList<CustomAttributeInfo>>? SwapoutDelegate = CreateSwapoutDelegate();
+
+        private static Func<ProxyGenerationOptions, IList<CustomAttributeInfo>, IList<CustomAttributeInfo>>? CreateSwapoutDelegate()
+        {
+            FieldInfo? additionalAttributesFieldInfo = typeof(ProxyGenerationOptions).GetField("additionalAttributes", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (additionalAttributesFieldInfo == null)
+                return null;
+
+            MethodInfo? interlockedExchangeMethodInfo = 
+                typeof(Interlocked)
+                .GetMethods(BindingFlags.Static | BindingFlags.Public)
+                .SingleOrDefault(methodInfo => methodInfo.IsGenericMethod && methodInfo.Name == nameof(Interlocked.Exchange))?
+                .MakeGenericMethod(typeof(IList<CustomAttributeInfo>));
+            if (interlockedExchangeMethodInfo == null)
+                return null;
+
+            var dynamicMethod = new DynamicMethod("SwapAdditionalAttributes", typeof(IList<CustomAttributeInfo>), new[] { typeof(ProxyGenerationOptions), typeof(IList<CustomAttributeInfo>) });
+            var generator = dynamicMethod.GetILGenerator();
+
+            generator.Emit(OpCodes.Ldarg_0);
+            generator.Emit(OpCodes.Ldflda, additionalAttributesFieldInfo);
+            generator.Emit(OpCodes.Ldarg_1);
+            generator.EmitCall(OpCodes.Call, interlockedExchangeMethodInfo, null);
+            generator.Emit(OpCodes.Ret);
+
+            return dynamicMethod.CreateDelegate<Func<ProxyGenerationOptions, IList<CustomAttributeInfo>, IList<CustomAttributeInfo>>>();
         }
 
     }
