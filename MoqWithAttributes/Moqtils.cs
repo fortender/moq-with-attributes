@@ -20,17 +20,37 @@ namespace MoqWithAttributes
             return Expression.Lambda<Func<Mock, bool>>(Expression.Property(mockParameter, propertyInfo), mockParameter).Compile();
         }
 
-        private static ProxyGenerationOptions? GetProxyGenerationOptions()
+        private static readonly Func<ProxyGenerationOptions>? ProxyGenerationOptionsAccessor = CreateProxyGenerationOptionsAccessor();
+
+        private static Func<ProxyGenerationOptions>? CreateProxyGenerationOptionsAccessor()
         {
-            Type? proxyFactoryType = typeof(Mock).Assembly.GetTypes().FirstOrDefault(type => type.Name == "ProxyFactory");
+            Assembly assembly = typeof(Mock).Assembly;
+
+            Type? proxyFactoryType = assembly.GetType("Moq.ProxyFactory");
             if (proxyFactoryType == null)
                 return null;
 
-            object? proxyFactory = proxyFactoryType.InvokeMember("Instance", BindingFlags.Static | BindingFlags.Public | BindingFlags.GetProperty, null, null, null);
-            if (proxyFactory == null || proxyFactory.GetType().Name != "CastleProxyFactory")
+            PropertyInfo? proxyFactoryInstancePropertyInfo = proxyFactoryType.GetProperty("Instance", BindingFlags.Static | BindingFlags.Public);
+            if (proxyFactoryInstancePropertyInfo == null)
+                return null;
+            
+            Type? castleProxyFactoryType = assembly.GetType("Moq.CastleProxyFactory");
+            if (castleProxyFactoryType == null)
+                return null;
+            
+            FieldInfo? generationOptionsFieldInfo = castleProxyFactoryType.GetField("generationOptions", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (generationOptionsFieldInfo == null)
                 return null;
 
-            return (ProxyGenerationOptions?)proxyFactory.GetType().GetField("generationOptions", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(proxyFactory);
+            return Expression.Lambda<Func<ProxyGenerationOptions>>(
+                Expression.Field(
+                    Expression.Convert(
+                        Expression.Property(null, proxyFactoryInstancePropertyInfo),
+                        castleProxyFactoryType
+                    ),
+                    generationOptionsFieldInfo
+                )
+            ).Compile();
         }
 
         internal static object SyncLock { get; } = new object();
@@ -41,8 +61,8 @@ namespace MoqWithAttributes
         {
             if (mock.IsInitialized())
                 throw new ArgumentException("Mock is already initialized", nameof(mock));
-
-            ProxyGenerationOptions options = GetProxyGenerationOptions() ?? throw new InvalidOperationException("Hack is gone");
+            
+            ProxyGenerationOptions options = ProxyGenerationOptionsAccessor?.Invoke() ?? throw new InvalidOperationException("Hack is gone");
 
             return SwapoutDelegate == null ?
                 GetObjectWithAttributesSafely(mock, options, attributeFactoryExpressions) :
