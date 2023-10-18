@@ -11,7 +11,7 @@ If you need to work with attributes you may find yourself creating an additional
 
 ## Usage
 ```csharp
-using MoqWithAttributes.Moqtils;
+using MoqWithAttributes;
 
 var mock = new Mock<IProxyType>();
 // Don't use mock.Object to initialize and get the object
