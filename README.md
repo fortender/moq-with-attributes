@@ -1,4 +1,5 @@
 # MoqWithAttributes
+[![.NET](https://github.com/fortender/moq-with-attributes/actions/workflows/dotnet.yml/badge.svg)](https://github.com/fortender/moq-with-attributes/actions/workflows/dotnet.yml)
 
 ## Purpose
 Create mocks via [Moq](https://github.com/devlooped/moq) and specify attributes that will be attached to the dynamically created proxy type.
