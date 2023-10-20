@@ -20,9 +20,9 @@ namespace MoqWithAttributes
             return Expression.Lambda<Func<Mock, bool>>(Expression.Property(mockParameter, propertyInfo), mockParameter).Compile();
         }
 
-        private static readonly Func<ProxyGenerationOptions>? ProxyGenerationOptionsAccessor = CreateProxyGenerationOptionsAccessor();
+        private static readonly Func<ProxyGenerationOptions?>? ProxyGenerationOptionsAccessor = CreateProxyGenerationOptionsAccessor();
 
-        private static Func<ProxyGenerationOptions>? CreateProxyGenerationOptionsAccessor()
+        private static Func<ProxyGenerationOptions?>? CreateProxyGenerationOptionsAccessor()
         {
             Assembly assembly = typeof(Mock).Assembly;
 
@@ -42,13 +42,20 @@ namespace MoqWithAttributes
             if (generationOptionsFieldInfo == null)
                 return null;
 
-            return Expression.Lambda<Func<ProxyGenerationOptions>>(
-                Expression.Field(
-                    Expression.Convert(
-                        Expression.Property(null, proxyFactoryInstancePropertyInfo),
-                        castleProxyFactoryType
-                    ),
-                    generationOptionsFieldInfo
+            // ProxyFactory.Instance as CastleProxyFactory
+            var castleProxyInstanceExpr = Expression.TypeAs(
+                Expression.Property(null, proxyFactoryInstancePropertyInfo), 
+                castleProxyFactoryType
+            );
+
+            return Expression.Lambda<Func<ProxyGenerationOptions?>>(
+                Expression.Condition(
+                    // if (castleProxyInstance == null)
+                    Expression.Equal(castleProxyInstanceExpr, Expression.Constant(null)),
+                    // true:  return (ProxyGenerationOptions?)null
+                    Expression.Constant(null, typeof(ProxyGenerationOptions)),
+                    // false: return (ProxyFactory.Instance as CastleProxyFactory).generationOptionsFieldInfo
+                    Expression.Field(castleProxyInstanceExpr, generationOptionsFieldInfo)
                 )
             ).Compile();
         }
